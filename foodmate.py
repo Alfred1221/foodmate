@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-import os,re
+import os,re,time
 
 def getHTMLText(url):
     try:
@@ -14,58 +14,87 @@ def getHTMLText(url):
     except:
         return '产生异常'
 
-def start():
+def start(target_url):
+    output = open('../output.txt','w')
     page_set = set()
     #国内标准page 1 到 10
-    for i in range(1,2):
-        url = "http://down.foodmate.net/standard/sort/1/index-"+str(i)+".html"
+    for i in range(1,11):
+        print("page "+str(i)+" start.")
+        url = target_url + "/index-"+str(i)+".html"
         page_content = getHTMLText(url)
 
         #解析HTML代码
-        soup = BeautifulSoup(page_content.text, 'html.parser')
-
-        #模糊搜索HTML代码的所有<a>标签
-        a_labels = soup.find_all('a')
-
-        #获取所有<a>标签中的href对应的值，即超链接
-        for a in a_labels:
-            sub_url = a.get('href')
-            if sub_url and re.match("http://down.foodmate.net/standard/sort/\d+/\d+\.html", sub_url):
-                page_set.add(sub_url)
+        if isinstance(page_content, requests.Response):
+            soup = BeautifulSoup(page_content.text, 'html.parser')
+            #模糊搜索HTML代码的所有<a>标签
+            a_labels = soup.find_all('a')
+            #获取所有<a>标签中的href对应的值，即超链接
+            for a in a_labels:
+                sub_url = a.get('href')
+                if sub_url and re.match("http://down.foodmate.net/standard/sort/\d+/\d+\.html", sub_url):
+                    page_set.add(sub_url)
+        else:
+            print("Invalid Page: "+ url)
     for page in page_set:
         page_content = getHTMLText(page)
-        soup = BeautifulSoup(page_content.text, 'html.parser')
+        if isinstance(page_content, requests.Response):
+            soup = BeautifulSoup(page_content.text, 'html.parser')
+        else:
+            print("Invalid Page: " + page)
 
         #找到基本属性
         table = soup.find(class_='xztable')
         #fields = table.find_all(attrs={'title'})
         print(page)
+        output.write(page+" ")
         for td in table.find_all(name='td'):
             if td.find_all(src=re.compile('xxyx')):
-                print("现行有效")
+                output.write("现行有效"+" ")
             elif td.find_all(src=re.compile('yjfz')):
-                print("已经废止")
+                output.write("已经废止"+" ")
+            elif td.find_all(src=re.compile('jjss')):
+                output.write("即将实施"+" ")
             else:
-                print(td.string)
+                output.write(str(td.string)+" ")
         tags=set()
         for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
             tags.add(tag.string)
         if len(tags)>0:
-            print(tags)
+            output.write(str(tags)+" ")
         pdf = soup.find(class_='telecom')
         if pdf:
             pdfurl = pdf.get('href')
-            #print(pdfurl)
-            res = getHTMLText(pdfurl)
-            if isinstance(res, requests.Response):
-                file_name = res.url.split("/")[-1]
-                print(file_name)
-                print(len(res.content))
-                with open(file_name, 'wb') as f:
-                    f.write(res.content)
-        print()
+            output.write(pdfurl+" ")
+            # res = getHTMLText(pdfurl)
+            # if isinstance(res, requests.Response):
+            #     file_name = res.url.split("/")[-1]
+            #     output.write(file_name)
+                #output.write(str(len(res.content)))
+                #with open(file_name, 'wb') as f:
+                #    f.write(res.content)
+        output.write('\n')
+    output.close()
     return
 
-#目标网页
+target_list = {"http://down.foodmate.net/standard/sort/3/":"国家标准",
+"http://down.foodmate.net/standard/sort/4/":"进出口行业标准",
+"http://down.foodmate.net/standard/sort/5/":"农业标准",
+"http://down.foodmate.net/standard/sort/7/":"水产标准",
+"http://down.foodmate.net/standard/sort/6/":"商业标准",
+"http://down.foodmate.net/standard/sort/8/":"轻工标准",
+"http://down.foodmate.net/standard/sort/15/":"地方标准",
+"http://down.foodmate.net/standard/sort/16/":"卫生标准",
+"http://down.foodmate.net/standard/sort/17/":"化工标准",
+"http://down.foodmate.net/standard/sort/14/":"医药标准",
+"http://down.foodmate.net/standard/sort/18/":"烟草标准",
+"http://down.foodmate.net/standard/sort/46/":"认证认可标准",
+"http://down.foodmate.net/standard/sort/19/":"食品安全企业标准",
+"http://down.foodmate.net/standard/sort/9/":"其它国内标准",
+"http://down.foodmate.net/standard/sort/12/":"团体标准"}
+
+print("Start Time:")
+print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 os.chdir('PDF')
-start()
+start("http://down.foodmate.net/standard/sort/1/")
+print("End Time:")
+print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
