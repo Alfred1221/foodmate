@@ -1,6 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
-import os,re,time
+import os,re,time,datetime
+import pymysql
 
 def getHTMLText(url):
     try:
@@ -14,11 +15,22 @@ def getHTMLText(url):
     except:
         return '产生异常'
 
-def start(target_url):
-    output = open('../output.txt','w')
+def runSql(conn, sql):
+    cursor = conn.cursor()
+    try:
+        cursor.execute(sql)
+    except pymysql.Error as e:
+        print(str(e))
+        conn.rollback()
+        return None
+    cursor.execute('commit;')
+    ret = cursor.fetchall()
+    return ret
+
+def get_page_set(target_url):
     page_set = set()
     #国内标准page 1 到 10
-    for i in range(1,11):
+    for i in range(1,2):
         print("page "+str(i)+" start.")
         url = target_url + "/index-"+str(i)+".html"
         page_content = getHTMLText(url)
@@ -35,7 +47,11 @@ def start(target_url):
                     page_set.add(sub_url)
         else:
             print("Invalid Page: "+ url)
+    return page_set
+
+def load_page(page_set, conn):
     for page in page_set:
+        parent_id = page.split("/")[-1].split(".")[0]
         page_content = getHTMLText(page)
         if isinstance(page_content, requests.Response):
             soup = BeautifulSoup(page_content.text, 'html.parser')
@@ -46,25 +62,38 @@ def start(target_url):
         table = soup.find(class_='xztable')
         #fields = table.find_all(attrs={'title'})
         print(page)
-        output.write(page+" ")
+        attr_list = []
         for td in table.find_all(name='td'):
             if td.find_all(src=re.compile('xxyx')):
-                output.write("现行有效"+" ")
+                attr_list.append("现行有效")
             elif td.find_all(src=re.compile('yjfz')):
-                output.write("已经废止"+" ")
+                attr_list.append("已经废止")
             elif td.find_all(src=re.compile('jjss')):
-                output.write("即将实施"+" ")
+                attr_list.append("即将实施")
             else:
-                output.write(str(td.string)+" ")
+                attr_list.append(str(td.string))
+        if len(attr_list) == 6:
+            type_name=attr_list[0]
+            publish_date = attr_list[1]
+            status = attr_list[2]
+            inplement_date = attr_list[3]
+            department = attr_list[4]
+            if '-' in attr_list[5]:
+                abolish_date = attr_list[5]
+            else:
+                abolish_date = '9999-12-31'
         tags=set()
         for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
             tags.add(tag.string)
         if len(tags)>0:
-            output.write(str(tags)+" ")
+            tags = ",".join(list(tags))
+        else:
+            tags = ''
         pdf = soup.find(class_='telecom')
         if pdf:
             pdfurl = pdf.get('href')
-            output.write(pdfurl+" ")
+        else:
+            pdfurl = ''
             # res = getHTMLText(pdfurl)
             # if isinstance(res, requests.Response):
             #     file_name = res.url.split("/")[-1]
@@ -72,9 +101,21 @@ def start(target_url):
                 #output.write(str(len(res.content)))
                 #with open(file_name, 'wb') as f:
                 #    f.write(res.content)
-        output.write('\n')
-    output.close()
+        sql = "insert into food_safety (parentid, type_name, status, department, industry_type, publish_date, " \
+              "inplement_date, abolish_date, url, download_url) value ("+parent_id+", '"+type_name+"', '"+status+"', '"+department+"', '"+tags+"', '"+publish_date+"', '"+inplement_date+"', '"+abolish_date+"', '"+page+"', '"+pdfurl+"')"
+        runSql(conn,sql)
+def start(target_url):
+
+    # Initialize DB
+    #conn = pymysql.connect(host='106.12.74.85', port=3306, user='spider', passwd='spider', db='spider')
+    conn = pymysql.connect(host='192.168.0.101', port=3306, user='yuan', passwd='yuan', db='mysql')
+    # Out put file initialize
+    page_set = get_page_set(target_url)
+    load_page(page_set,conn)
+    conn.close()  # 断开连接
     return
+
+
 
 target_list = {"http://down.foodmate.net/standard/sort/3/":"国家标准",
 "http://down.foodmate.net/standard/sort/4/":"进出口行业标准",
