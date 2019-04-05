@@ -1,6 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
-import os,re,time,datetime
+import os,re,time,datetime,threading
 import pymysql
 
 def getHTMLText(url):
@@ -19,18 +19,18 @@ def runSql(conn, sql):
     cursor = conn.cursor()
     try:
         cursor.execute(sql)
+        conn.commit()
+        ret = cursor.fetchall()
+        return ret
     except pymysql.Error as e:
         print(str(e))
         conn.rollback()
         return None
-    cursor.execute('commit;')
-    ret = cursor.fetchall()
-    return ret
 
 def get_page_set(target_url):
     page_set = set()
     #国内标准page 1 到 10
-    for i in range(1,2):
+    for i in range(1,166):
         print("page "+str(i)+" start.")
         url = target_url + "/index-"+str(i)+".html"
         page_content = getHTMLText(url)
@@ -49,61 +49,69 @@ def get_page_set(target_url):
             print("Invalid Page: "+ url)
     return page_set
 
-def load_page(page_set, conn):
-    for page in page_set:
-        parent_id = page.split("/")[-1].split(".")[0]
-        page_content = getHTMLText(page)
-        if isinstance(page_content, requests.Response):
-            soup = BeautifulSoup(page_content.text, 'html.parser')
-        else:
-            print("Invalid Page: " + page)
+def load_page(page, conn):
+    parent_id = page.split("/")[-1].split(".")[0]
+    page_content = getHTMLText(page)
+    if isinstance(page_content, requests.Response):
+        soup = BeautifulSoup(page_content.text, 'html.parser')
+    else:
+        print("Invalid Page: " + page)
 
-        #找到基本属性
-        table = soup.find(class_='xztable')
-        #fields = table.find_all(attrs={'title'})
-        print(page)
-        attr_list = []
-        for td in table.find_all(name='td'):
-            if td.find_all(src=re.compile('xxyx')):
-                attr_list.append("现行有效")
-            elif td.find_all(src=re.compile('yjfz')):
-                attr_list.append("已经废止")
-            elif td.find_all(src=re.compile('jjss')):
-                attr_list.append("即将实施")
-            else:
-                attr_list.append(str(td.string))
-        if len(attr_list) == 6:
-            type_name=attr_list[0]
+    #找到基本属性
+    table = soup.find(class_='xztable')
+    #fields = table.find_all(attrs={'title'})
+    print(page)
+    attr_list = []
+    for td in table.find_all(name='td'):
+        if td.find_all(src=re.compile('xxyx')):
+            attr_list.append("现行有效")
+        elif td.find_all(src=re.compile('yjfz')):
+            attr_list.append("已经废止")
+        elif td.find_all(src=re.compile('jjss')):
+            attr_list.append("即将实施")
+        elif td.find_all(src=re.compile('wz.gif')):
+            attr_list.append("未知")
+        else:
+            attr_list.append(str(td.string))
+    if len(attr_list) == 6:
+        type_name=attr_list[0]
+        status = attr_list[2]
+        department = attr_list[4]
+        if '-' in attr_list[1]:
             publish_date = attr_list[1]
-            status = attr_list[2]
+        else:
+            publish_date = '9999-12-31'
+        if '-' in attr_list[3]:
             inplement_date = attr_list[3]
-            department = attr_list[4]
-            if '-' in attr_list[5]:
-                abolish_date = attr_list[5]
-            else:
-                abolish_date = '9999-12-31'
-        tags=set()
-        for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
-            tags.add(tag.string)
-        if len(tags)>0:
-            tags = ",".join(list(tags))
         else:
-            tags = ''
-        pdf = soup.find(class_='telecom')
-        if pdf:
-            pdfurl = pdf.get('href')
+            inplement_date = '9999-12-31'
+        if '-' in attr_list[5]:
+            abolish_date = attr_list[5]
         else:
-            pdfurl = ''
-            # res = getHTMLText(pdfurl)
-            # if isinstance(res, requests.Response):
-            #     file_name = res.url.split("/")[-1]
-            #     output.write(file_name)
-                #output.write(str(len(res.content)))
-                #with open(file_name, 'wb') as f:
-                #    f.write(res.content)
-        sql = "insert into food_safety (parentid, type_name, status, department, industry_type, publish_date, " \
-              "inplement_date, abolish_date, url, download_url) value ("+parent_id+", '"+type_name+"', '"+status+"', '"+department+"', '"+tags+"', '"+publish_date+"', '"+inplement_date+"', '"+abolish_date+"', '"+page+"', '"+pdfurl+"')"
-        runSql(conn,sql)
+            abolish_date = '9999-12-31'
+    tags=set()
+    for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
+        tags.add(tag.string)
+    if len(tags)>0:
+        tags = ",".join(list(tags))
+    else:
+        tags = ''
+    pdf = soup.find(class_='telecom')
+    if pdf:
+        pdfurl = pdf.get('href')
+    else:
+        pdfurl = ''
+        # res = getHTMLText(pdfurl)
+        # if isinstance(res, requests.Response):
+        #     file_name = res.url.split("/")[-1]
+        #     output.write(file_name)
+            #output.write(str(len(res.content)))
+            #with open(file_name, 'wb') as f:
+            #    f.write(res.content)
+    sql = "insert into food_safety (parentid, type_name, status, department, industry_type, publish_date, " \
+          "inplement_date, abolish_date, url, download_url) value ("+parent_id+", '"+type_name+"', '"+status+"', '"+department+"', '"+tags+"', '"+publish_date+"', '"+inplement_date+"', '"+abolish_date+"', '"+page+"', '"+pdfurl+"')"
+    runSql(conn,sql)
+
 def start(target_url):
 
     # Initialize DB
@@ -111,7 +119,14 @@ def start(target_url):
     conn = pymysql.connect(host='192.168.0.101', port=3306, user='yuan', passwd='yuan', db='mysql')
     # Out put file initialize
     page_set = get_page_set(target_url)
-    load_page(page_set,conn)
+    #创建线程
+    threads = []
+    for page in page_set:
+        t = threading.Thread(target=load_page,args=(page, conn))
+        threads.append(t)
+    for t in threads:
+        t.start()
+        t.join()
     conn.close()  # 断开连接
     return
 
@@ -136,6 +151,6 @@ target_list = {"http://down.foodmate.net/standard/sort/3/":"国家标准",
 print("Start Time:")
 print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 os.chdir('PDF')
-start("http://down.foodmate.net/standard/sort/1/")
+start("http://down.foodmate.net/standard/sort/2/")
 print("End Time:")
 print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
