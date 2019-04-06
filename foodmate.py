@@ -27,98 +27,94 @@ def runSql(conn, sql):
         conn.rollback()
         return None
 
-def get_page_set(target_url):
-    page_set = set()
-    #国内标准page 1 到 10
-    for i in range(1,166):
-        print("page "+str(i)+" start.")
-        url = target_url + "/index-"+str(i)+".html"
-        page_content = getHTMLText(url)
+def get_page_set(url, page_set):
+    page_content = getHTMLText(url)
 
-        #解析HTML代码
-        if isinstance(page_content, requests.Response):
-            soup = BeautifulSoup(page_content.text, 'html.parser')
-            #模糊搜索HTML代码的所有<a>标签
-            a_labels = soup.find_all('a')
-            #获取所有<a>标签中的href对应的值，即超链接
-            for a in a_labels:
-                sub_url = a.get('href')
-                if sub_url and re.match("http://down.foodmate.net/standard/sort/\d+/\d+\.html", sub_url):
-                    page_set.add(sub_url)
-        else:
-            print("Invalid Page: "+ url)
-    return page_set
+    #解析HTML代码
+    if isinstance(page_content, requests.Response):
+        soup = BeautifulSoup(page_content.text, 'html.parser')
+        #模糊搜索HTML代码的所有<a>标签
+        a_labels = soup.find_all('a')
+        #获取所有<a>标签中的href对应的值，即超链接
+        for a in a_labels:
+            sub_url = a.get('href')
+            if sub_url and re.match("http://down.foodmate.net/standard/sort/\d+/\d+\.html", sub_url):
+                page_set.add(sub_url)
+    else:
+        print("Invalid Page: "+ url)
+    return
 
 def load_page(page, conn):
     parent_id = page.split("/")[-1].split(".")[0]
     page_content = getHTMLText(page)
     if isinstance(page_content, requests.Response):
         soup = BeautifulSoup(page_content.text, 'html.parser')
+        #找到基本属性
+        table = soup.find(class_='xztable')
+        #fields = table.find_all(attrs={'title'})
+        print(page)
+        attr_list = []
+        for td in table.find_all(name='td'):
+            if td.find_all(src=re.compile('xxyx')):
+                attr_list.append("现行有效")
+            elif td.find_all(src=re.compile('yjfz')):
+                attr_list.append("已经废止")
+            elif td.find_all(src=re.compile('jjss')):
+                attr_list.append("即将实施")
+            elif td.find_all(src=re.compile('wz.gif')):
+                attr_list.append("未知")
+            else:
+                attr_list.append(str(td.string))
+        if len(attr_list) == 6:
+            type_name=attr_list[0]
+            status = attr_list[2]
+            department = attr_list[4]
+            if '-' in attr_list[1]:
+                publish_date = attr_list[1]
+            else:
+                publish_date = '9999-12-31'
+            if '-' in attr_list[3]:
+                inplement_date = attr_list[3]
+            else:
+                inplement_date = '9999-12-31'
+            if '-' in attr_list[5]:
+                abolish_date = attr_list[5]
+            else:
+                abolish_date = '9999-12-31'
+        tags=set()
+        for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
+            tags.add(tag.string)
+        if len(tags)>0:
+            tags = ",".join(list(tags))
+        else:
+            tags = ''
+        pdf = soup.find(class_='telecom')
+        if pdf:
+            pdfurl = pdf.get('href')
+        else:
+            pdfurl = ''
+        sql = "insert into food_safety (parentid, type_name, status, department, industry_type, publish_date, " \
+              "inplement_date, abolish_date, url, download_url) value ("+parent_id+", '"+type_name+"', '"+status+"', '"+department+"', '"+tags+"', '"+publish_date+"', '"+inplement_date+"', '"+abolish_date+"', '"+page+"', '"+pdfurl+"')"
+        runSql(conn,sql)
     else:
         print("Invalid Page: " + page)
-
-    #找到基本属性
-    table = soup.find(class_='xztable')
-    #fields = table.find_all(attrs={'title'})
-    print(page)
-    attr_list = []
-    for td in table.find_all(name='td'):
-        if td.find_all(src=re.compile('xxyx')):
-            attr_list.append("现行有效")
-        elif td.find_all(src=re.compile('yjfz')):
-            attr_list.append("已经废止")
-        elif td.find_all(src=re.compile('jjss')):
-            attr_list.append("即将实施")
-        elif td.find_all(src=re.compile('wz.gif')):
-            attr_list.append("未知")
-        else:
-            attr_list.append(str(td.string))
-    if len(attr_list) == 6:
-        type_name=attr_list[0]
-        status = attr_list[2]
-        department = attr_list[4]
-        if '-' in attr_list[1]:
-            publish_date = attr_list[1]
-        else:
-            publish_date = '9999-12-31'
-        if '-' in attr_list[3]:
-            inplement_date = attr_list[3]
-        else:
-            inplement_date = '9999-12-31'
-        if '-' in attr_list[5]:
-            abolish_date = attr_list[5]
-        else:
-            abolish_date = '9999-12-31'
-    tags=set()
-    for tag in soup.find_all(href=re.compile('http://down.foodmate.net/standard/hangye.php\?')):
-        tags.add(tag.string)
-    if len(tags)>0:
-        tags = ",".join(list(tags))
-    else:
-        tags = ''
-    pdf = soup.find(class_='telecom')
-    if pdf:
-        pdfurl = pdf.get('href')
-    else:
-        pdfurl = ''
-        # res = getHTMLText(pdfurl)
-        # if isinstance(res, requests.Response):
-        #     file_name = res.url.split("/")[-1]
-        #     output.write(file_name)
-            #output.write(str(len(res.content)))
-            #with open(file_name, 'wb') as f:
-            #    f.write(res.content)
-    sql = "insert into food_safety (parentid, type_name, status, department, industry_type, publish_date, " \
-          "inplement_date, abolish_date, url, download_url) value ("+parent_id+", '"+type_name+"', '"+status+"', '"+department+"', '"+tags+"', '"+publish_date+"', '"+inplement_date+"', '"+abolish_date+"', '"+page+"', '"+pdfurl+"')"
-    runSql(conn,sql)
 
 def start(target_url):
 
     # Initialize DB
     #conn = pymysql.connect(host='106.12.74.85', port=3306, user='spider', passwd='spider', db='spider')
     conn = pymysql.connect(host='192.168.0.101', port=3306, user='yuan', passwd='yuan', db='mysql')
-    # Out put file initialize
-    page_set = get_page_set(target_url)
+    page_set = set()
+    #国内标准page 1 到 10
+    threads_get_page =[]
+    for i in range(800,1647):
+        print("page "+str(i)+" start.")
+        url = target_url + "/index-"+str(i)+".html"
+        t = threading.Thread(target=get_page_set, args=(url, page_set))
+        threads_get_page.append(t)
+        t.start()
+    for t in threads_get_page:
+        t.join()
     #创建线程
     threads = []
     for page in page_set:
@@ -151,6 +147,6 @@ target_list = {"http://down.foodmate.net/standard/sort/3/":"国家标准",
 print("Start Time:")
 print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
 os.chdir('PDF')
-start("http://down.foodmate.net/standard/sort/2/")
+start("http://down.foodmate.net/standard/sort/1/")
 print("End Time:")
 print(time.strftime('%Y-%m-%d %H:%M:%S',time.localtime(time.time())))
